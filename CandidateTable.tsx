@@ -38,6 +38,11 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId }) => {
     trpc: { context: { skipBatch: true } },
   });
 
+  type CandidatesResponse = { records?: TalentRecord[] | null };
+  const isCandidatesResponse = (value: unknown): value is CandidatesResponse => {
+    return typeof value === "object" && value !== null && "records" in (value as Record<string, unknown>);
+  };
+
   // Header-only columns for AntD Table
   const columns = useMemo(
     () => [
@@ -76,7 +81,10 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId }) => {
             from_page: "agent_sourcing",
           });
 
-          const safeRecords: TalentRecord[] = (data as any)?.records ?? [];
+          const safeRecords: TalentRecord[] =
+            isCandidatesResponse(data) && Array.isArray(data.records)
+              ? (data.records as TalentRecord[])
+              : [];
           setCandidates((prev) => [...prev, ...safeRecords]);
 
           if (safeRecords.length < API_CHUNK_SIZE) {
