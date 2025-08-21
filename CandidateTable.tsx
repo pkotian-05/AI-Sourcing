@@ -162,13 +162,13 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, totalCount }) 
 									size="small"
 									onClick={() =>
 										setExpandedRowKeys((prev) =>
-											prev.includes(record?.id as string)
+											prev.includes((record?.id as string))
 												? prev.filter((k) => k !== (record?.id as string))
-												: [...prev, record?.id as string]
+												: [...prev, (record?.id as string)]
 										)
 								}
 								>
-									{expandedRowKeys.includes(record?.id as string) ? "Hide" : "View"}
+									{expandedRowKeys.includes((record?.id as string)) ? "Hide" : "View"}
 								</Button>
 							</div>
 
@@ -220,7 +220,7 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, totalCount }) 
 				<AutoSizer>
 					{({ width, height }) => (
 						<List
-							ref={(ref) => (listRef.current = ref)}
+							ref={(node: List | null) => { listRef.current = node; }}
 							width={width}
 							height={height}
 							rowHeight={ROW_HEIGHT}
