@@ -2,6 +2,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Table, Avatar, Tag, Button, Typography, Skeleton } from "antd";
 import { UserOutlined } from "@ant-design/icons";
 import { List, AutoSizer, ListRowRenderer } from "react-virtualized";
+// Use your existing types and trpc client
+// Adjust import paths to match your codebase if needed
+// eslint-disable-next-line import/no-unresolved
+import { TalentRecord } from "@astpl-arion/data-service";
+// eslint-disable-next-line import/no-unresolved
+import { trpc } from "../../../client/react-query";
 
 const { Text } = Typography;
 
@@ -12,67 +18,10 @@ const CHUNKS_PER_PAGE = ITEMS_PER_PAGE / API_CHUNK_SIZE; // 4 calls per 20
 const TABLE_HEIGHT = 600;
 const ROW_HEIGHT = 60;
 
-// Minimal TalentRecord to keep this component standalone
-export type TalentRecord = {
-  id: string;
-  basics?: {
-    name?: { full_name?: string };
-    current_position?: string;
-    headline?: string;
-    current_company?: string;
-  };
-};
-
-type FetchParams = {
-  searchQuery?: string;
-  page: number; // zero-based page index of the API when pageSize = 5
-  pageSize: number; // always 5 for our chunked calls
-  agentId?: string;
-};
-
-type Fetcher = (params: FetchParams) => Promise<{ records: TalentRecord[] }>; // expected shape
-
 type CandidateTableProps = {
   agentId?: string;
-  fetcher?: Fetcher; // optional injection; a default mock is used if not supplied
 };
-
-// Default mock fetcher so the component can render without backend wiring
-const defaultFetcher: Fetcher = async ({ page, pageSize }) => {
-  await new Promise((r) => setTimeout(r, 400));
-  const startIndex = page * pageSize;
-  const records: TalentRecord[] = Array.from({ length: pageSize }).map((_, i) => {
-    const n = startIndex + i + 1;
-    return {
-      id: `mock-${n}`,
-      basics: {
-        name: { full_name: `Candidate ${n}` },
-        current_position: [
-          "Registered Nurse",
-          "Nurse Practitioner",
-          "Clinical Nurse Specialist",
-          "Surgical Nurse",
-        ][n % 4],
-        headline: [
-          "Critical Care Nurse",
-          "Nurse Anesthetist",
-          "Pediatric Nurse",
-          "Oncology Nurse",
-        ][n % 4],
-        current_company: [
-          "North Star Medical Center",
-          "Maple Grove Health System",
-          "Evergreen General Hospital",
-          "Crestwood Health",
-        ][n % 4],
-      },
-    };
-  });
-  return { records };
-};
-
-const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, fetcher }) => {
-  const effectiveFetcher = useMemo(() => fetcher ?? defaultFetcher, [fetcher]);
+const CandidateTable: React.FC<CandidateTableProps> = ({ agentId }) => {
 
   const [candidates, setCandidates] = useState<TalentRecord[]>([]);
   const [isFetchingPage, setIsFetchingPage] = useState<boolean>(false);
@@ -83,6 +32,11 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, fetcher }) => 
   const listRef = useRef<List | null>(null);
 
   const isInitialLoading = candidates.length === 0 && isFetchingPage;
+
+  // TRPC mutation used for fetching candidates in 5-item chunks
+  const candidateMutation = trpc.talentSearch.getCandidates.useMutation({
+    trpc: { context: { skipBatch: true } },
+  });
 
   // Header-only columns for AntD Table
   const columns = useMemo(
@@ -112,14 +66,17 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, fetcher }) => 
       for (let i = 0; i < CHUNKS_PER_PAGE; i += 1) {
         const apiPage = firstChunkPage + i;
         try {
-          const { records } = await effectiveFetcher({
+          const data = await candidateMutation.mutateAsync({
+            talentType: "global",
             searchQuery: undefined,
-            page: apiPage,
-            pageSize: API_CHUNK_SIZE,
-            agentId,
+            skip_contacts: true,
+            page: apiPage, // zero-based
+            pageSize: API_CHUNK_SIZE, // 5 per call
+            agent_id: agentId,
+            from_page: "agent_sourcing",
           });
 
-          const safeRecords = records ?? [];
+          const safeRecords: TalentRecord[] = (data as any)?.records ?? [];
           setCandidates((prev) => [...prev, ...safeRecords]);
 
           if (safeRecords.length < API_CHUNK_SIZE) {
@@ -137,7 +94,7 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, fetcher }) => 
       if (anyReturnedLessThanChunk) setHasMore(false);
       setIsFetchingPage(false);
     },
-    [agentId, effectiveFetcher, hasMore, isFetchingPage]
+    [agentId, candidateMutation, hasMore, isFetchingPage]
   );
 
   // Initial load (first 20 via 4x5)
