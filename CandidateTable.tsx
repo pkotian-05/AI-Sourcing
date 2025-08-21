@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Table, Avatar, Tag, Button, Typography, Skeleton, theme } from "antd";
 import { UserOutlined } from "@ant-design/icons";
-import { List, AutoSizer, ListRowRenderer } from "react-virtualized";
+import VirtualList from "rc-virtual-list";
 import { TalentRecord } from "@astpl-arion/data-service";
 import { trpc } from "../../../client/react-query";
 import "../table.css";
@@ -24,10 +24,7 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, totalCount }) 
 	const [candidates, setCandidates] = useState<TalentRecord[]>([]);
 	const [isFetchingPage, setIsFetchingPage] = useState<boolean>(false);
 	const [hasMore, setHasMore] = useState<boolean>(true);
-	const [visiblePageIndex, setVisiblePageIndex] = useState<number>(0); // 20-sized pages
 	const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
-
-	const listRef = useRef<List | null>(null);
 
 	const isInitialLoading = candidates.length === 0 && isFetchingPage;
 
@@ -62,7 +59,6 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, totalCount }) 
 			setIsFetchingPage(true);
 
 			// Assume API uses zero-based page indexes when pageSize=5
-			// First chunk page for this visual page:
 			const firstChunkPage = page20Index * CHUNKS_PER_PAGE;
 			let anyReturnedLessThanChunk = false;
 			let totalAddedThisPage = 0;
@@ -99,13 +95,11 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, totalCount }) 
 						break;
 					}
 				} catch (error) {
-					// In a real app you would surface a notification; we stop loading more
 					anyReturnedLessThanChunk = true;
 					break;
 				}
 			}
 
-			setVisiblePageIndex(page20Index);
 			const reachedTotalAfter = typeof totalCount === "number" && baseCount + totalAddedThisPage >= totalCount;
 			if (anyReturnedLessThanChunk || reachedTotalAfter) setHasMore(false);
 			setIsFetchingPage(false);
@@ -118,122 +112,25 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, totalCount }) 
 		fetchVisualPage(0);
 	}, [fetchVisualPage]);
 
-	// Virtualized row renderer
-	const rowRenderer: ListRowRenderer = useCallback(
-		({ index, key, style }) => {
-			const isPlaceholderRow = index >= candidates.length;
-			const record: TalentRecord | undefined = isPlaceholderRow
-				? undefined
-				: candidates[index];
-
-			const expanded = record ? expandedRowKeys.includes(record?.id as string) : false;
-
-			return (
-				<div
-					key={key}
-					style={{
-						...style,
-						display: "flex",
-						borderBottom: "1px solid #f0f0f0",
-						background: "#fff",
-						alignItems: "center",
-						padding: "0 12px",
-					}}
-				>
-					{/* Name */}
-					<div style={{ flex: 2, display: "flex", alignItems: "center" }}>
-						{isPlaceholderRow ? (
-							<Skeleton.Avatar size={32} active />
-						) : (
-							<>
-								<Avatar size={32} icon={<UserOutlined />} style={{ marginRight: 8 }} />
-								<Text strong>{record?.basics?.name?.full_name}</Text>
-							</>
-						)}
-					</div>
-
-					{/* Profiles */}
-					<div style={{ flex: 2 }}>
-						{isPlaceholderRow ? (
-							<Skeleton.Input style={{ width: 120 }} size="small" active />
-						) : (
-							record?.basics?.current_position
-						)}
-					</div>
-
-					{/* Job Titles */}
-					<div style={{ flex: 2 }}>
-						{isPlaceholderRow ? (
-							<Skeleton.Input style={{ width: 120 }} size="small" active />
-						) : (
-							record?.basics?.headline
-						)}
-					</div>
-
-					{/* Company */}
-					<div style={{ flex: 2 }}>
-						{isPlaceholderRow ? (
-							<Skeleton.Input style={{ width: 120 }} size="small" active />
-						) : (
-							record?.basics?.current_company
-						)}
-					</div>
-
-					{/* Match Score */}
-					<div style={{ flex: 1 }}>
-						{isPlaceholderRow ? (
-							<Skeleton.Button size="small" active />
-						) : (
-							<Tag color="green">Good Match</Tag>
-						)}
-					</div>
-
-					{/* Criteria Toggle */}
-					<div style={{ flex: 2 }}>
-						{isPlaceholderRow ? (
-							<Skeleton.Button size="small" active />
-						) : (
-							<Button
-								type="link"
-								size="small"
-								onClick={() =>
-									record &&
-									setExpandedRowKeys((prev) =>
-										prev.includes(record?.id as string)
-											? prev.filter((k) => k !== record?.id as string)
-											: [...prev, record?.id as string]
-									)
-								}
-							>
-								{expanded ? "Hide" : "View"}
-							</Button>
-						)}
-					</div>
-
-					{/* Action */}
-					<div style={{ flex: 1 }}>
-						{isPlaceholderRow ? <Skeleton.Button size="small" active /> : <Button size="small" shape="circle">...</Button>}
-					</div>
-				</div>
-			);
-		},
-		[candidates, expandedRowKeys]
-	);
+	// Scroll handler for rc-virtual-list
 	const handleScroll = useCallback(
-		({ clientHeight, scrollHeight, scrollTop }:any) => {
-			const nearBottom = scrollTop + clientHeight >= scrollHeight - 200;
-			if (nearBottom && !isFetchingPage && hasMore) {
-				const nextPage = visiblePageIndex + 1;
-				fetchVisualPage(nextPage);
-			}
+		(e: React.UIEvent<HTMLElement>) => {
+			const target = e.currentTarget as HTMLElement;
+			const nearBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 200;
+			if (!nearBottom) return;
+			if (isFetchingPage || !hasMore) return;
+			if (typeof totalCount === "number" && candidates.length >= totalCount) return;
+			const nextPage = Math.floor(candidates.length / ITEMS_PER_PAGE);
+			fetchVisualPage(nextPage);
 		},
-		[fetchVisualPage, hasMore, isFetchingPage, visiblePageIndex]
+		[isFetchingPage, hasMore, totalCount, candidates.length, fetchVisualPage]
 	);
 
 	// Row count: honor totalCount if provided; show one extra placeholder while fetching
 	const initialRows = typeof totalCount === "number" ? Math.min(ITEMS_PER_PAGE, totalCount) : ITEMS_PER_PAGE;
 	const baseRowCount = isInitialLoading ? initialRows : candidates.length + (isFetchingPage ? 1 : 0);
 	const rowCount = typeof totalCount === "number" ? Math.min(baseRowCount, totalCount) : baseRowCount;
+	const virtualData: (TalentRecord | null)[] = Array.from({ length: rowCount }, (_, i) => candidates[i] ?? null);
 
 	return (
 		<div
@@ -255,23 +152,107 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, totalCount }) 
 				pagination={false}
 				dataSource={[]}
                 sticky
-                scroll={{ y: TABLE_HEIGHT }}
                 style={{ border: `1px solid ${token.colorBorder}`, marginBottom: 0 }}
 			/>
 			<div style={{ height: TABLE_HEIGHT }}>
-				<AutoSizer>
-					{({ width, height }) => (
-						<List
-							ref={(node: List | null) => { listRef.current = node; }}
-							width={width}
-							height={height}
-							rowHeight={ROW_HEIGHT}
-							rowCount={rowCount}
-							rowRenderer={rowRenderer}
-							onScroll={handleScroll}
-						/>
-					)}
-				</AutoSizer>
+				<VirtualList
+					data={virtualData}
+					height={TABLE_HEIGHT}
+					itemHeight={ROW_HEIGHT}
+					itemKey={(item, index) => (item ? (item.id as string) : `placeholder-${index}`)}
+					onScroll={handleScroll}
+				>
+					{(item, index) => {
+						const record = item as TalentRecord | null;
+						const isPlaceholderRow = record === null;
+						return (
+							<div
+								style={{
+									display: "flex",
+									borderBottom: "1px solid #f0f0f0",
+									background: "#fff",
+									alignItems: "center",
+									padding: "0 12px",
+									height: ROW_HEIGHT,
+								}}
+							>
+								{/* Name */}
+								<div style={{ flex: 2, display: "flex", alignItems: "center" }}>
+									{isPlaceholderRow ? (
+										<Skeleton.Avatar size={32} active />
+									) : (
+										<>
+											<Avatar size={32} icon={<UserOutlined />} style={{ marginRight: 8 }} />
+											<Text strong>{record?.basics?.name?.full_name}</Text>
+										</>
+									)}
+								</div>
+
+								{/* Profiles */}
+								<div style={{ flex: 2 }}>
+									{isPlaceholderRow ? (
+										<Skeleton.Input style={{ width: 120 }} size="small" active />
+									) : (
+										record?.basics?.current_position
+									)}
+								</div>
+
+								{/* Job Titles */}
+								<div style={{ flex: 2 }}>
+									{isPlaceholderRow ? (
+										<Skeleton.Input style={{ width: 120 }} size="small" active />
+									) : (
+										record?.basics?.headline
+									)}
+								</div>
+
+								{/* Company */}
+								<div style={{ flex: 2 }}>
+									{isPlaceholderRow ? (
+										<Skeleton.Input style={{ width: 120 }} size="small" active />
+									) : (
+										record?.basics?.current_company
+									)}
+								</div>
+
+								{/* Match Score */}
+								<div style={{ flex: 1 }}>
+									{isPlaceholderRow ? (
+										<Skeleton.Button size="small" active />
+									) : (
+										<Tag color="green">Good Match</Tag>
+									)}
+								</div>
+
+								{/* Criteria Toggle */}
+								<div style={{ flex: 2 }}>
+									{isPlaceholderRow ? (
+										<Skeleton.Button size="small" active />
+									) : (
+										<Button
+											type="link"
+											size="small"
+											onClick={() =>
+												setExpandedRowKeys((prev) =>
+													prev.includes((record?.id as string))
+														? prev.filter((k) => k !== (record?.id as string))
+														: [...prev, (record?.id as string)]
+												)
+											}
+										>
+											{expandedRowKeys.includes((record?.id as string)) ? "Hide" : "View"}
+										</Button>
+									)}
+								</div>
+
+								{/* Action */}
+								<div style={{ flex: 1 }}>
+									{isPlaceholderRow ? <Skeleton.Button size="small" active /> : <Button size="small" shape="circle">...</Button>}
+								</div>
+							</div>
+						);
+					}}
+				</VirtualList>
 			</div>
 		</div>
 	);
