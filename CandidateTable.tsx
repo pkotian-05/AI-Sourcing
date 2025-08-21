@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { Table, Image, Tag, Button, Typography, Skeleton, theme, Space, Dropdown, Drawer, List, Row, Col } from "antd";
+import { Table, Image, Tag, Button, Typography, Skeleton, theme, Space, Dropdown, List, Row, Col } from "antd";
 import { FacebookFilled, GithubFilled, InstagramFilled, LinkedinFilled, LinkOutlined, MoreOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { TalentRecord } from "@astpl-arion/data-service";
@@ -42,6 +42,54 @@ const getMatchTag = (matched: CriteriaItem["matched"], token: any) => {
 	return <Tag color={token.colorInfo}>Info</Tag>;
 };
 
+// Inline criteria panel for an expanded row
+const CriteriaPanel: React.FC<{ agentId?: string; talentId: string | number }> = ({ agentId, talentId }) => {
+	const { token } = useToken();
+	const { data, isLoading } = trpc.aiAgent.getAigetAgentTalentMatchByCriteria.useQuery(
+		{ agent_id: agentId, talent_id: talentId as any },
+		{ refetchOnWindowFocus: false, enabled: Boolean(agentId && talentId) }
+	);
+
+	return (
+		<Skeleton style={{ padding: "0 16px" }} active loading={isLoading} paragraph={{ rows: 4 }}>
+			<List
+				itemLayout="vertical"
+				header={
+					<Row justify="space-between" align="middle" style={{ padding: "0 16px", marginBottom: 8 }}>
+						<Col>
+							<Typography.Title level={5} style={{ margin: 0 }}>
+								Why we matched this profile
+							</Typography.Title>
+						</Col>
+						<Col>
+							<Typography.Link>Edit Criteria</Typography.Link>
+						</Col>
+					</Row>
+				}
+				dataSource={data?.data?.items as CriteriaItem[] | undefined}
+				renderItem={(item: CriteriaItem, index: number) => {
+					const length = data?.data?.items?.length ?? 0;
+					const isLastItem = index === length - 1;
+					return (
+						<List.Item style={{ borderBlockEnd: isLastItem ? "none" : `1px solid ${token?.colorBorder}` }}>
+							<List.Item.Meta
+								style={{ padding: "0 16px", marginBlockEnd: 0 }}
+								title={
+									<Space direction="vertical" size={0}>
+										{getMatchTag(item?.matched, token)}
+										<Typography.Text strong>{item?.criteria}</Typography.Text>
+									</Space>
+								}
+								description={<Typography.Text>{item?.description}</Typography.Text>}
+							/>
+						</List.Item>
+					);
+				}}
+			/>
+		</Skeleton>
+	);
+};
+
 const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, totalCount }) => {
 	const { token } = useToken();
 
@@ -49,10 +97,7 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, totalCount }) 
 	const [isFetching, setIsFetching] = useState(false);
 	const [nextApiPage, setNextApiPage] = useState(0); // 0-based page index
 	const [hasMore, setHasMore] = useState(true);
-
-	const [criteriaOpen, setCriteriaOpen] = useState(false);
-	const [selectedTalentId, setSelectedTalentId] = useState<string | number | null>(null);
-	const [isEditCriteria] = useState(false);
+	const [expandedRowKeys, setExpandedRowKeys] = useState<React.Key[]>([]);
 
 	const scrollRef = useRef<HTMLDivElement | null>(null);
 	const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -67,12 +112,6 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, totalCount }) 
 	const getImagesByKeysQuery = trpc.cms.getImagesByKeys.useQuery({
 		key: ["nppes"],
 	});
-
-	// Lazy criteria fetch
-	const criteriaQuery = trpc.aiAgent.getAigetAgentTalentMatchByCriteria.useQuery(
-		{ agent_id: agentId, talent_id: selectedTalentId as any },
-		{ enabled: Boolean(criteriaOpen && agentId && selectedTalentId), refetchOnWindowFocus: false }
-	);
 
 	type CandidatesResponse = { records?: TalentRecord[] | null };
 	const isCandidatesResponse = (value: unknown): value is CandidatesResponse =>
@@ -146,9 +185,9 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, totalCount }) 
 		{ label: "View", key: "view", onClick: () => {} },
 	];
 
-	const openCriteria = (record: TalentRecord) => {
-		setSelectedTalentId(record?.id as any);
-		setCriteriaOpen(true);
+	const toggleExpand = (record: TalentRecord) => {
+		const key = String((record as any)?.id);
+		setExpandedRowKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
 	};
 
 	// Fetch up to 4 API pages sequentially: 0,1,2,3 then 4,5,6,7 ...
@@ -330,7 +369,9 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, totalCount }) 
 				record?.__isSkeleton ? (
 					<Skeleton.Button active size="small" style={{ width: 60 }} />
 				) : (
-					<Button type="link" size="small" onClick={() => openCriteria(record as TalentRecord)}>View</Button>
+					<Button type="link" size="small" onClick={() => toggleExpand(record as TalentRecord)}>
+						{expandedRowKeys.includes(String((record as any)?.id)) ? "Hide" : "View"}
+					</Button>
 				),
 		},
 		{
@@ -368,6 +409,19 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, totalCount }) 
 				pagination={false}
 				size="small"
 				bordered
+				expandable={{
+					rowExpandable: (record) => !(record as any)?.__isSkeleton,
+					expandedRowRender: (record) => (
+						<div style={{ background: token.colorBgContainer, padding: 12 }}>
+							<CriteriaPanel agentId={agentId} talentId={(record as any)?.id} />
+						</div>
+					),
+					expandedRowKeys,
+					onExpand: (expanded, record) => {
+						const key = String((record as any)?.id);
+						setExpandedRowKeys((prev) => (expanded ? [...prev, key] : prev.filter((k) => k !== key)));
+					},
+				}}
 			/>
 
 			{/* Bottom sentinel for infinite scroll */}
@@ -379,52 +433,6 @@ const CandidateTable: React.FC<CandidateTableProps> = ({ agentId, totalCount }) 
 					<Skeleton active paragraph={{ rows: 1 }} />
 				</div>
 			)}
-
-			{/* Criteria Drawer */}
-			<Drawer
-				open={criteriaOpen}
-				onClose={() => setCriteriaOpen(false)}
-				title={null}
-				width={560}
-				bodyStyle={{ padding: 0 }}
-			>
-				<Skeleton style={{ padding: "0 16px" }} active loading={criteriaQuery.isLoading} paragraph={{ rows: 4 }}>
-					<List
-						itemLayout="vertical"
-						header={
-							<Row justify="space-between" align="middle" style={{ padding: "0 16px", marginBottom: 8 }}>
-								<Col>
-									<Typography.Title level={5} style={{ margin: 0 }}>
-										Why we matched this profile
-									</Typography.Title>
-								</Col>
-								<Col>
-									<Typography.Link /* onClick={() => setIsEditCriteria(true)} */>Edit Criteria</Typography.Link>
-								</Col>
-							</Row>
-						}
-						dataSource={criteriaQuery.data?.data?.items as CriteriaItem[] | undefined}
-						renderItem={(item: CriteriaItem, index: number) => {
-							const length = (criteriaQuery.data?.data?.items?.length ?? 0);
-							const isLastItem = index === length - 1;
-							return (
-								<List.Item style={{ borderBlockEnd: isLastItem ? "none" : `1px solid ${token?.colorBorder}` }}>
-									<List.Item.Meta
-										style={{ padding: "0 16px", marginBlockEnd: 0 }}
-										title={
-											<Space direction="vertical" size={0}>
-												{getMatchTag(item?.matched, token)}
-												<Typography.Text strong>{item?.criteria}</Typography.Text>
-											</Space>
-										}
-										description={<Typography.Text>{item?.description}</Typography.Text>}
-									/>
-								</List.Item>
-							);
-						}}
-					/>
-				</Skeleton>
-			</Drawer>
 		</div>
 	);
 };
